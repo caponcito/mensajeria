@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="night">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MensajeríaSD — UIS 2026</title>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.10.1/dist/full.min.css" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=Space+Grotesk:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        * { font-family: 'Space Grotesk', sans-serif; }
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        .glass-card {
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.08);
+            backdrop-filter: blur(12px);
+        }
+        .header-glow { text-shadow: 0 0 40px rgba(99, 220, 196, 0.4); }
+        .status-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: #63dcc4; box-shadow: 0 0 8px #63dcc4;
+            animation: pulse-dot 2s infinite;
+        }
+        @keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:0.3} }
+        .tag-tcp  { background:rgba(99,179,237,0.15); color:#63b3ed; border:1px solid rgba(99,179,237,0.3); }
+        .tag-udp  { background:rgba(154,117,234,0.15); color:#9a75ea; border:1px solid rgba(154,117,234,0.3); }
+        .tag-clock{ background:rgba(99,220,196,0.1); color:#63dcc4; border:1px solid rgba(99,220,196,0.25); }
+        .row-enter { animation: slideIn 0.2s ease; }
+        @keyframes slideIn { from{opacity:0;transform:translateY(-4px)} to{opacity:1;transform:translateY(0)} }
+        ::-webkit-scrollbar{width:4px}
+        ::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.1);border-radius:2px}
+    </style>
+</head>
+<body class="min-h-screen bg-base-300">
+
+    <header class="border-b border-white/5 px-8 py-5 flex items-center justify-between">
+        <div class="flex items-center gap-4">
+            <div class="status-dot"></div>
+            <h1 class="text-2xl font-bold tracking-tight header-glow text-teal-300 mono">MensajeríaSD</h1>
+            <span class="badge badge-outline badge-sm text-white/30 mono">UIS 2026-1</span>
+        </div>
+        <div class="flex gap-2">
+            <button onclick="cargar(null)"  class="btn btn-xs btn-ghost mono" id="btn-todos">ALL</button>
+            <button onclick="cargar('TCP')" class="btn btn-xs btn-ghost mono text-blue-400" id="btn-tcp">TCP</button>
+            <button onclick="cargar('UDP')" class="btn btn-xs btn-ghost mono text-purple-400" id="btn-udp">UDP</button>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-6 py-8 grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+        <!-- Sidebar izquierdo -->
+        <div class="lg:col-span-1 flex flex-col gap-5">
+
+            <!-- Registrar peer -->
+            <div class="glass-card rounded-2xl p-5">
+                <h2 class="text-xs font-semibold uppercase tracking-widest text-white/40 mb-4">Registrar Peer</h2>
+                <div class="flex flex-col gap-3">
+                    <input id="p-name" placeholder="nombre" class="input input-sm input-bordered bg-white/5 mono w-full">
+                    <input id="p-ip"   placeholder="dirección IP" class="input input-sm input-bordered bg-white/5 mono w-full">
+                    <input id="p-port" placeholder="puerto" type="number" value="5001" class="input input-sm input-bordered bg-white/5 mono w-full">
+                    <button onclick="registrarPeer()" class="btn btn-sm btn-outline border-teal-500/40 text-teal-400 hover:bg-teal-500/10 hover:border-teal-400 w-full">
+                        + Registrar
+                    </button>
+                </div>
+            </div>
+
+            <!-- Lista peers -->
+            <div class="glass-card rounded-2xl p-5">
+                <h2 class="text-xs font-semibold uppercase tracking-widest text-white/40 mb-4">Peers</h2>
+                <div id="lista-peers" class="flex flex-col gap-2">
+                    <p class="text-white/20 text-sm text-center py-4">Sin peers registrados</p>
+                </div>
+            </div>
+
+            <!-- Enviar -->
+            <div class="glass-card rounded-2xl p-5">
+                <h2 class="text-xs font-semibold uppercase tracking-widest text-white/40 mb-4">Enviar Mensaje</h2>
+                <div class="flex flex-col gap-3">
+                    <select id="sel-peer"  class="select select-sm select-bordered bg-white/5 mono w-full"></select>
+                    <select id="sel-proto" class="select select-sm select-bordered bg-white/5 mono w-full">
+                        <option value="tcp">TCP</option>
+                        <option value="udp">UDP</option>
+                    </select>
+                    <input id="msg-sender"  placeholder="Tu nombre" class="input input-sm input-bordered bg-white/5 w-full">
+                    <input id="msg-content" placeholder="Escribe un mensaje..." class="input input-sm input-bordered bg-white/5 w-full">
+                    <div class="flex gap-2">
+                        <button onclick="enviarMensaje()"   class="btn btn-sm btn-primary flex-1">Enviar</button>
+                        <button onclick="enviarBroadcast()" class="btn btn-sm btn-outline border-purple-500/40 text-purple-400 hover:bg-purple-500/10 flex-1">Broadcast</button>
+                    </div>
+                    <div class="min-h-5">
+                        <span id="msg-status" class="text-xs mono"></span>
+                        <span id="brc-status" class="text-xs mono"></span>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Tabla mensajes -->
+        <div class="lg:col-span-2">
+            <div class="glass-card rounded-2xl p-5 h-full">
+                <div class="flex items-center justify-between mb-4">
+                    <h2 class="text-xs font-semibold uppercase tracking-widest text-white/40">Historial de Mensajes</h2>
+                    <span id="msg-count" class="text-xs mono text-white/20">0 mensajes</span>
+                </div>
+                <div class="overflow-x-auto">
+                    <table class="table table-xs w-full">
+                        <thead>
+                            <tr class="border-white/5">
+                                <th class="text-white/30 mono text-xs font-normal">Timestamp</th>
+                                <th class="text-white/30 mono text-xs font-normal">Sender</th>
+                                <th class="text-white/30 mono text-xs font-normal">Contenido</th>
+                                <th class="text-white/30 mono text-xs font-normal">Proto</th>
+                                <th class="text-white/30 mono text-xs font-normal">LC</th>
+                            </tr>
+                        </thead>
+                        <tbody id="cuerpo-tabla"></tbody>
+                    </table>
+                    <p id="empty-msg" class="text-white/20 text-sm text-center py-12">Sin mensajes aún</p>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <script>
+        function cargar(protocol) {
+            const url = protocol ? `/mensajes?protocol=${protocol}` : "/mensajes"
+            fetch(url).then(r => r.json()).then(mensajes => {
+                const tbody = document.getElementById("cuerpo-tabla")
+                const empty = document.getElementById("empty-msg")
+                const count = document.getElementById("msg-count")
+                tbody.innerHTML = ""
+                count.textContent = `${mensajes.length} mensaje${mensajes.length !== 1 ? 's' : ''}`
+                empty.style.display = mensajes.length === 0 ? "block" : "none"
+                mensajes.forEach(m => {
+                    const proto = m.protocol?.toUpperCase()
+                    const fila = document.createElement("tr")
+                    fila.className = "border-white/5 hover:bg-white/[0.02] row-enter"
+                    fila.innerHTML = `
+                        <td class="mono text-white/40 text-xs">${(m.timestamp ?? '-').slice(0,19).replace('T',' ')}</td>
+                        <td class="font-semibold text-white/80 text-xs">${m.sender ?? '-'}</td>
+                        <td class="text-white/70 max-w-xs truncate text-xs">${m.content ?? '-'}</td>
+                        <td><span class="px-2 py-0.5 rounded-full text-xs mono font-semibold ${proto === 'TCP' ? 'tag-tcp' : 'tag-udp'}">${proto}</span></td>
+                        <td><span class="px-2 py-0.5 rounded-full text-xs mono tag-clock">${m.lclock ?? '-'}</span></td>
+                    `
+                    tbody.appendChild(fila)
+                })
+            })
+        }
+
+        cargar(null)
+        setInterval(() => cargar(null), 3000)
+
+        function cargarPeers() {
+            fetch("/peers").then(r => r.json()).then(peers => {
+                const sel = document.getElementById("sel-peer")
+                const seleccionado = sel.value
+                const lista = document.getElementById("lista-peers")
+                lista.innerHTML = ""
+                if (peers.length === 0) {
+                    lista.innerHTML = '<p class="text-white/20 text-sm text-center py-4">Sin peers registrados</p>'
+                } else {
+                    peers.forEach(p => {
+                        const item = document.createElement("div")
+                        item.className = "flex items-center justify-between bg-white/5 rounded-xl px-3 py-2"
+                        item.innerHTML = `
+                            <div>
+                                <p class="text-sm font-semibold text-white/80">${p.name}</p>
+                                <p class="mono text-xs text-white/30">${p.ip}:${p.port}</p>
+                            </div>
+                            <button onclick="eliminarPeer('${p.name}')" class="btn btn-ghost btn-xs text-red-400/60 hover:text-red-400">✕</button>
+                        `
+                        lista.appendChild(item)
+                    })
+                }
+                sel.innerHTML = peers.map(p =>
+                    `<option value="${p.name}">${p.name} — ${p.ip}:${p.port}</option>`
+                ).join("")
+                if (seleccionado) sel.value = seleccionado
+            })
+        }
+
+        function registrarPeer() {
+            const name = document.getElementById("p-name").value.trim()
+            const ip   = document.getElementById("p-ip").value.trim()
+            const port = document.getElementById("p-port").value.trim()
+            if (!name || !ip || !port) return alert("Completa todos los campos")
+            fetch(`/peers?name=${name}&ip=${ip}&port=${port}`, { method: "POST" })
+                .then(() => {
+                    document.getElementById("p-name").value = ""
+                    document.getElementById("p-ip").value   = ""
+                    cargarPeers()
+                })
+        }
+
+        function eliminarPeer(name) {
+            fetch(`/peers/${name}`, { method: "DELETE" }).then(() => cargarPeers())
+        }
+
+        function setStatus(id, msg, color) {
+            const el = document.getElementById(id)
+            el.textContent = msg
+            el.style.color = color
+            setTimeout(() => el.textContent = "", 3000)
+        }
+
+        function enviarMensaje() {
+            const peer    = document.getElementById("sel-peer").value
+            const proto   = document.getElementById("sel-proto").value
+            const sender  = document.getElementById("msg-sender").value.trim()
+            const content = document.getElementById("msg-content").value.trim()
+            if (!peer || !sender || !content) return alert("Completa todos los campos")
+            const url = `/enviar/${proto}/peer?peer_name=${encodeURIComponent(peer)}&sender_name=${encodeURIComponent(sender)}&message=${encodeURIComponent(content)}`
+            fetch(url, { method: "POST" }).then(r => r.json()).then(res => {
+                if (res.error) setStatus("msg-status", `✗ ${res.error}`, "#f87171")
+                else {
+                    setStatus("msg-status", "✓ Enviado", "#63dcc4")
+                    document.getElementById("msg-content").value = ""
+                    cargar(null)
+                }
+            })
+        }
+
+        function enviarBroadcast() {
+            const sender  = document.getElementById("msg-sender").value.trim()
+            const content = document.getElementById("msg-content").value.trim()
+            if (!sender || !content) return alert("Escribe tu nombre y un mensaje")
+            const url = `/enviar/broadcast?sender_name=${encodeURIComponent(sender)}&message=${encodeURIComponent(content)}`
+            fetch(url, { method: "POST" }).then(r => r.json()).then(res => {
+                const ok   = res.filter(r => r.status?.includes("correctamente")).length
+                const fail = res.length - ok
+                const msg  = fail > 0 ? `✓ ${ok} ok · ✗ ${fail} fallaron` : `✓ ${ok} enviados`
+                setStatus("brc-status", msg, fail > 0 ? "#facc15" : "#c084fc")
+                if (ok > 0) cargar(null)
+            })
+        }
+
+        cargarPeers()
+        setInterval(cargarPeers, 5000)
+    </script>
+</body>
+</html>
