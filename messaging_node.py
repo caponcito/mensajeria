@@ -3,7 +3,7 @@ messaging_node.py - Nodo de mensajería punto a punto
 Taller de Sistemas Distribuidos - UIS 2026-1
 """
 
-import socket
+import socket, time
 import threading
 import json
 from datetime import datetime
@@ -57,7 +57,8 @@ def save_message(sender: str, content: str, protocol: str, lclock: int):
 
 def tcp_listener(host: str, port: int):
     """
-    Servidor TCP, crea una conexion TCP se queda escuchando puertos y crea un hilo por cada conexion
+    Servidor TCP, crea una conexion TCP se queda escuchando puertos
+    y crea un hilo por cada conexion
     """
     conexion = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     conexion.bind((host, port))
@@ -69,7 +70,7 @@ def tcp_listener(host: str, port: int):
 
 
 def manejar_cliente(conn, addr):
-    """recibe el mensaje de maximo 4096 bytes y envia un ack de confirmacion"""
+    """Recibe el mensaje de maximo 4096 bytes y envia un ack de confirmacion"""
     global lclock
     datos = conn.recv(4096)
     mensaje = json.loads(datos)
@@ -84,66 +85,82 @@ def manejar_cliente(conn, addr):
 
 def send_tcp_message(peer_ip: str, peer_port: int, sender_name: str, message: str):
     """
-    TODO 2: Implemente el envío de mensajes TCP que:
-    - Cree un socket TCP y se conecte a (peer_ip, peer_port)
-    - Construya un dict con "sender" y "content"
-    - Serialice a JSON y envíe los bytes
-    - Reciba y muestre el ACK
-    - Maneje excepciones (ConnectionRefusedError, timeout)
+    Envío de mensajes TCP:
+    - Crea un socket TCP y se conecta a (peer_ip, peer_port)
+    - Construye un dict con "sender", "content" y "lclock"
+    - Serializa a JSON y envía los bytes
+    - Recibe y muestra el ACK
+    - Maneja excepciones (ConnectionRefusedError, timeout)
     """
     conexion = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
     try:
         conexion.connect((peer_ip, peer_port))
-        lclock = tick()
-        msg = json.dumps({"sender": sender_name, "content": message, "lclock": lclock})
+        clock = tick()  # incrementa el reloj antes de enviar
+        msg = json.dumps({"sender": sender_name, "content": message, "lclock": clock})
         conexion.sendall(msg.encode())
-        ack = conexion.recv(4096)  # se envia un ack de 4096 bytes
+        ack = conexion.recv(4096)
         print(json.loads(ack))
     except ConnectionRefusedError:
-        # el servidor no está corriendo
         print("No se pudo conectar al servidor")
     except socket.timeout:
-        # tardó demasiado en responder
-        print("El servidor a tomado demasidado en responder")
+        print("El servidor ha tomado demasiado en responder")
     finally:
         conexion.close()  # cerrar la conexion en cualquiera de los casos
 
 
 def udp_listener(host: str, port: int):
-    """
-    TODO 3: Implemente el servidor UDP que:
-    - Cree un socket UDP (socket.AF_INET, socket.SOCK_DGRAM)
-    - Haga bind en (host, port)
-    - En un bucle infinito reciba datagramas (recvfrom)
-    - Decodifique el JSON y llame a save_message()
-    - Observe: ¿necesita enviar ACK? ¿Por qué?
-    """
     global lclock
     conexion = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     conexion.bind((host, port))
     while True:
-        data, addr = conexion.recvfrom(4096)
-        mensaje = json.loads(data)
-
-        with lclock_lock:
-            lclock = max(lclock, mensaje["lclock"]) + 1
-
-        save_message(addr[0], mensaje["content"], "UDP", lclock)
+        try:
+            data, addr = conexion.recvfrom(4096)
+            mensaje = json.loads(data)
+            with lclock_lock:
+                lclock = max(lclock, mensaje["lclock"]) + 1
+            save_message(addr[0], mensaje["content"], "UDP", lclock)
+            print(f"[UDP] Mensaje recibido de {addr[0]}: {mensaje['content']}")
+        except KeyError as e:
+            print(f"[UDP] Error - clave faltante en mensaje: {e}")
+        except Exception as e:
+            print(f"[UDP] Error inesperado: {e}")
 
 
 def send_udp_message(peer_ip: str, peer_port: int, sender_name: str, message: str):
     """
-    TODO 4: Implemente el envío de mensajes UDP.
-    Compare con send_tcp_message:
-    - ¿Necesita connect()? ¿O puede usar sendto()?
-    - ¿Qué pasa si el destinatario no está disponible?
+    Envío de mensajes UDP:
+    - No necesita connect(), usa sendto() directamente con la IP y puerto destino
+    - No espera ACK porque UDP es sin conexión
+    - Si el destinatario no está disponible, el datagrama se pierde sin error
     """
     conexion = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        clock = tick()
-        msg = json.dumps({"sender": sender_name, "content": message, "lclock": lclock})
+        clock = tick()  # ← FIX: guardar el valor retornado por tick() en "clock"
+        msg = json.dumps({"sender": sender_name, "content": message, "lclock": clock})
+        # ← FIX: antes usaba "lclock" (global sin actualizar), ahora usa "clock" (valor local correcto)
         conexion.sendto(msg.encode(), (peer_ip, peer_port))
-        # save_message(sender_name, msg, "UDP")
     finally:
         conexion.close()
+
+
+"""heartbeat_sender.py — Nodo que emite heartbeats periódicos vía UDP."""
+
+MONITOR_HOST = "127.0.0.1"
+MONITOR_PORT = 5000
+INTERVAL = 2.0  # Δ = 2 segundos
+NODE_ID = "nodo-alpha"
+
+
+def run_sender():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    seq = 0
+    print(
+        f"[{NODE_ID}] Enviando heartbeats cada {INTERVAL}s a {MONITOR_HOST}:{MONITOR_PORT}"
+    )
+    while True:
+        msg = json.dumps({"node_id": NODE_ID, "seq": seq, "ts": time.time()})
+        sock.sendto(msg.encode(), (MONITOR_HOST, MONITOR_PORT))
+        print(f" → HB seq={seq}")
+        seq += 1
+        time.sleep(INTERVAL)

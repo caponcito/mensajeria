@@ -3,40 +3,24 @@ api_server.py - Interfaz web para consulta de mensajes
 Taller de Sistemas Distribuidos - UIS 2026-1
 """
 
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse
-from messaging_node import (
-    con_db,
-    send_tcp_message,
-    send_udp_message,
-)
+from messaging_node import con_db, send_tcp_message, send_udp_message
 import threading
-import sqlite3
+import json, os
 from fastapi.templating import Jinja2Templates
-from fastapi.staticfiles import StaticFiles
 
 templates = Jinja2Templates(directory="templates")
 app = FastAPI()
 
-TCP_PORT = 5000
-UDP_PORT = 5001
-HOST = "0.0.0.0"
-
 
 @app.get("/mensajes")
 def get_mensajes(protocol: str | None = None, sender: str | None = None):
-    """
-    TODO 5: Implemente el endpoint que retorne los mensajes.
-    - Si se proporciona "protocol", filtre por protocolo
-    - Si se proporciona "sender", filtre por remitente
-    - Retorne la lista (más recientes primero)
-    - Use store_lock para acceso seguro
-    """
+    """Retorna mensajes filtrados por protocolo y/o sender."""
     con, cur = con_db()
     with con:
         condiciones = []
         params = []
-
         if protocol:
             condiciones.append("protocol = ?")
             params.append(protocol)
@@ -44,15 +28,13 @@ def get_mensajes(protocol: str | None = None, sender: str | None = None):
             condiciones.append("sender = ?")
             params.append(sender)
 
+        cons = "SELECT * FROM mensajes"
         if condiciones:
-            cons = "SELECT * FROM mensajes WHERE " + " AND ".join(condiciones)
-        else:
-            cons = "SELECT * FROM mensajes"
+            cons += " WHERE " + " AND ".join(condiciones)
 
         cur.execute(cons, params)
         result = [dict(row) for row in cur.fetchall()]
     con.close()
-
     return result
 
 
@@ -68,7 +50,7 @@ def enviar_udp(peer_ip: str, peer_port: int, sender_name: str, message: str):
     return {"status": "enviado"}
 
 
-import json, os
+# ── Peers ────────────────────────────────────────────────────────────────────
 
 PEERS_FILE = "peers.json"
 
@@ -91,13 +73,26 @@ def get_peers():
 
 
 @app.post("/peers")
-def add_peer(name: str, ip: str, port: int):
+def add_peer(name: str, ip: str, tcp_port: int, udp_port: int):
+    """
+    Registra un peer con dos puertos: uno para TCP y otro para UDP.
+    Si ya existe un peer con ese nombre, lo reemplaza.
+    """
     peers = load_peers()
-    # Evitar duplicados por nombre
-    peers = [p for p in peers if p["name"] != name]
-    peers.append({"name": name, "ip": ip, "port": port})
+    peers = [p for p in peers if p["name"] != name]  # evitar duplicados por nombre
+    peers.append(
+        {
+            "name": name,
+            "ip": ip,
+            "tcp_port": tcp_port,  # puerto para mensajes TCP
+            "udp_port": udp_port,  # puerto para mensajes UDP
+        }
+    )
     save_peers(peers)
-    return {"status": "registrado", "peer": {"name": name, "ip": ip, "port": port}}
+    return {
+        "status": "registrado",
+        "peer": {"name": name, "ip": ip, "tcp_port": tcp_port, "udp_port": udp_port},
+    }
 
 
 @app.delete("/peers/{name}")
@@ -107,14 +102,17 @@ def remove_peer(name: str):
     return {"status": "eliminado"}
 
 
-# Endpoint nuevo: enviar por nombre de peer
+# ── Enviar por nombre de peer ─────────────────────────────────────────────────
+
+
 @app.post("/enviar/tcp/peer")
 def enviar_tcp_peer(peer_name: str, sender_name: str, message: str):
     peers = load_peers()
     peer = next((p for p in peers if p["name"] == peer_name), None)
     if not peer:
         return {"error": f"Peer '{peer_name}' no encontrado"}
-    send_tcp_message(peer["ip"], peer["port"], sender_name, message)
+    # usar tcp_port del peer registrado
+    send_tcp_message(peer["ip"], peer["tcp_port"], sender_name, message)
     return {"status": "Enviado", "to": peer}
 
 
@@ -124,45 +122,43 @@ def enviar_udp_peer(peer_name: str, sender_name: str, message: str):
     peer = next((p for p in peers if p["name"] == peer_name), None)
     if not peer:
         return {"error": f"Peer '{peer_name}' no encontrado"}
-    send_udp_message(peer["ip"], peer["port"], sender_name, message)
+    # usar udp_port del peer registrado
+    send_udp_message(peer["ip"], peer["udp_port"], sender_name, message)
     return {"status": "Enviado", "to": peer}
+
+
+# ── Broadcast ────────────────────────────────────────────────────────────────
 
 
 @app.post("/enviar/broadcast")
 def broadcast(sender_name: str, message: str, protocol: str = "tcp"):
-    # 1. Por cada peer, crea un thread que llame a send_tcp/udp
-    # 2. Cada thread debe guardar su resultado en `resultados`
-    # 3. Inicia todos los threads
-    # 4. Espera que terminen todos con .join()
-    # 5. Retorna resultados
     peers = load_peers()
     resultados = []
     threads = []
 
-    def enviar_peer_a_peer(peer):
-        """funcion intermedia para enviar
-        el mensaje a los peers y retornar
-        si fallo o se envio correctamente"""
+    def enviar_a_peer(peer):
+        """Elige el puerto correcto según el protocolo y envía."""
         try:
-            send_tcp_message(
-                peer["ip"], peer["port"], sender_name=sender_name, message=message
-            )
-            resultados.append({"status": "peer respondiendo correctamente"})
+            if protocol == "udp":
+                send_udp_message(peer["ip"], peer["udp_port"], sender_name, message)
+            else:
+                send_tcp_message(peer["ip"], peer["tcp_port"], sender_name, message)
+            resultados.append({"peer": peer["name"], "status": "ok"})
         except ConnectionRefusedError:
-            resultados.append({"status": "peer no responde", "name": peer["name"]})
+            resultados.append({"peer": peer["name"], "status": "no responde"})
 
     for peer in peers:
-        thread = threading.Thread(
-            target=enviar_peer_a_peer,
-            args=(peer,),
-        )
+        thread = threading.Thread(target=enviar_a_peer, args=(peer,))
         thread.start()
-        threads.append(
-            thread
-        )  # se adjunta el hilo a la lista para esperar que termine con join
+        threads.append(thread)
+
     for thread in threads:
-        thread.join()  # espera que terminen todo los hilos de ejecutarse y no cada uno
-    return f"<script>alert({resultados})</script>"
+        thread.join()  # esperar que terminen todos antes de retornar
+
+    return resultados
+
+
+# ── Dashboard ─────────────────────────────────────────────────────────────────
 
 
 @app.get("/", response_class=HTMLResponse)

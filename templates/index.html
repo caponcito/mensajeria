@@ -57,7 +57,21 @@
                 <div class="flex flex-col gap-3">
                     <input id="p-name" placeholder="nombre" class="input input-sm input-bordered bg-white/5 mono w-full">
                     <input id="p-ip"   placeholder="dirección IP" class="input input-sm input-bordered bg-white/5 mono w-full">
-                    <input id="p-port" placeholder="puerto" type="number" value="5001" class="input input-sm input-bordered bg-white/5 mono w-full">
+
+                    <!-- Dos puertos: uno por protocolo -->
+                    <div class="flex gap-2">
+                        <div class="flex-1">
+                            <label class="text-xs text-blue-400/70 mono mb-1 block">Puerto TCP</label>
+                            <input id="p-tcp-port" placeholder="5001" type="number" value="5001"
+                                class="input input-sm input-bordered bg-white/5 mono w-full text-blue-300">
+                        </div>
+                        <div class="flex-1">
+                            <label class="text-xs text-purple-400/70 mono mb-1 block">Puerto UDP</label>
+                            <input id="p-udp-port" placeholder="5002" type="number" value="5002"
+                                class="input input-sm input-bordered bg-white/5 mono w-full text-purple-300">
+                        </div>
+                    </div>
+
                     <button onclick="registrarPeer()" class="btn btn-sm btn-outline border-teal-500/40 text-teal-400 hover:bg-teal-500/10 hover:border-teal-400 w-full">
                         + Registrar
                     </button>
@@ -76,11 +90,21 @@
             <div class="glass-card rounded-2xl p-5">
                 <h2 class="text-xs font-semibold uppercase tracking-widest text-white/40 mb-4">Enviar Mensaje</h2>
                 <div class="flex flex-col gap-3">
-                    <select id="sel-peer"  class="select select-sm select-bordered bg-white/5 mono w-full"></select>
-                    <select id="sel-proto" class="select select-sm select-bordered bg-white/5 mono w-full">
+                    <select id="sel-peer" class="select select-sm select-bordered bg-white/5 mono w-full"></select>
+
+                    <!-- Al cambiar protocolo, se actualiza el puerto mostrado -->
+                    <select id="sel-proto" class="select select-sm select-bordered bg-white/5 mono w-full"
+                            onchange="actualizarPuertoMostrado()">
                         <option value="tcp">TCP</option>
                         <option value="udp">UDP</option>
                     </select>
+
+                    <!-- Puerto que se usará, solo lectura, se actualiza automáticamente -->
+                    <div class="flex items-center gap-2 px-3 py-2 rounded-xl bg-white/5 border border-white/10">
+                        <span class="text-white/30 text-xs mono">Puerto activo:</span>
+                        <span id="puerto-activo" class="text-xs mono text-blue-300 font-semibold">5001</span>
+                    </div>
+
                     <input id="msg-sender"  placeholder="Tu nombre" class="input input-sm input-bordered bg-white/5 w-full">
                     <input id="msg-content" placeholder="Escribe un mensaje..." class="input input-sm input-bordered bg-white/5 w-full">
                     <div class="flex gap-2">
@@ -124,6 +148,10 @@
     </main>
 
     <script>
+        // Mapa en memoria: nombre del peer → {ip, tcp_port, udp_port}
+        // Se llena cada vez que cargarPeers() responde
+        let peersData = {}
+
         function cargar(protocol) {
             const url = protocol ? `/mensajes?protocol=${protocol}` : "/mensajes"
             fetch(url).then(r => r.json()).then(mensajes => {
@@ -158,35 +186,77 @@
                 const seleccionado = sel.value
                 const lista = document.getElementById("lista-peers")
                 lista.innerHTML = ""
+                peersData = {}  // resetear el mapa local
+
                 if (peers.length === 0) {
                     lista.innerHTML = '<p class="text-white/20 text-sm text-center py-4">Sin peers registrados</p>'
                 } else {
                     peers.forEach(p => {
+                        // guardar datos del peer para usarlos al enviar
+                        peersData[p.name] = p
+
                         const item = document.createElement("div")
                         item.className = "flex items-center justify-between bg-white/5 rounded-xl px-3 py-2"
                         item.innerHTML = `
                             <div>
                                 <p class="text-sm font-semibold text-white/80">${p.name}</p>
-                                <p class="mono text-xs text-white/30">${p.ip}:${p.port}</p>
+                                <p class="mono text-xs text-white/30">${p.ip}</p>
+                                <!-- Mostrar ambos puertos con su color de protocolo -->
+                                <p class="mono text-xs">
+                                    <span class="text-blue-400/70">TCP:${p.tcp_port}</span>
+                                    <span class="text-white/20 mx-1">·</span>
+                                    <span class="text-purple-400/70">UDP:${p.udp_port}</span>
+                                </p>
                             </div>
                             <button onclick="eliminarPeer('${p.name}')" class="btn btn-ghost btn-xs text-red-400/60 hover:text-red-400">✕</button>
                         `
                         lista.appendChild(item)
                     })
                 }
+
+                // reconstruir selector con nombre del peer
                 sel.innerHTML = peers.map(p =>
-                    `<option value="${p.name}">${p.name} — ${p.ip}:${p.port}</option>`
+                    `<option value="${p.name}">${p.name} — ${p.ip}</option>`
                 ).join("")
                 if (seleccionado) sel.value = seleccionado
+
+                // actualizar el puerto mostrado según protocolo actual
+                actualizarPuertoMostrado()
             })
         }
 
+        // Actualiza el indicador "Puerto activo" según peer + protocolo seleccionados
+        function actualizarPuertoMostrado() {
+            const peerName = document.getElementById("sel-peer").value
+            const proto    = document.getElementById("sel-proto").value
+            const peer     = peersData[peerName]
+            const el       = document.getElementById("puerto-activo")
+
+            if (!peer) {
+                el.textContent = "—"
+                el.className = "text-xs mono text-white/30 font-semibold"
+                return
+            }
+
+            // elegir puerto según protocolo y actualizar color
+            if (proto === "tcp") {
+                el.textContent = peer.tcp_port
+                el.className = "text-xs mono text-blue-300 font-semibold"
+            } else {
+                el.textContent = peer.udp_port
+                el.className = "text-xs mono text-purple-300 font-semibold"
+            }
+        }
+
         function registrarPeer() {
-            const name = document.getElementById("p-name").value.trim()
-            const ip   = document.getElementById("p-ip").value.trim()
-            const port = document.getElementById("p-port").value.trim()
-            if (!name || !ip || !port) return alert("Completa todos los campos")
-            fetch(`/peers?name=${name}&ip=${ip}&port=${port}`, { method: "POST" })
+            const name     = document.getElementById("p-name").value.trim()
+            const ip       = document.getElementById("p-ip").value.trim()
+            const tcp_port = document.getElementById("p-tcp-port").value.trim()
+            const udp_port = document.getElementById("p-udp-port").value.trim()
+            if (!name || !ip || !tcp_port || !udp_port) return alert("Completa todos los campos")
+
+            // enviar ambos puertos al backend
+            fetch(`/peers?name=${name}&ip=${ip}&tcp_port=${tcp_port}&udp_port=${udp_port}`, { method: "POST" })
                 .then(() => {
                     document.getElementById("p-name").value = ""
                     document.getElementById("p-ip").value   = ""
@@ -206,12 +276,13 @@
         }
 
         function enviarMensaje() {
-            const peer    = document.getElementById("sel-peer").value
-            const proto   = document.getElementById("sel-proto").value
-            const sender  = document.getElementById("msg-sender").value.trim()
-            const content = document.getElementById("msg-content").value.trim()
-            if (!peer || !sender || !content) return alert("Completa todos los campos")
-            const url = `/enviar/${proto}/peer?peer_name=${encodeURIComponent(peer)}&sender_name=${encodeURIComponent(sender)}&message=${encodeURIComponent(content)}`
+            const peerName = document.getElementById("sel-peer").value
+            const proto    = document.getElementById("sel-proto").value
+            const sender   = document.getElementById("msg-sender").value.trim()
+            const content  = document.getElementById("msg-content").value.trim()
+            if (!peerName || !sender || !content) return alert("Completa todos los campos")
+
+            const url = `/enviar/${proto}/peer?peer_name=${encodeURIComponent(peerName)}&sender_name=${encodeURIComponent(sender)}&message=${encodeURIComponent(content)}`
             fetch(url, { method: "POST" }).then(r => r.json()).then(res => {
                 if (res.error) setStatus("msg-status", `✗ ${res.error}`, "#f87171")
                 else {
@@ -223,18 +294,24 @@
         }
 
         function enviarBroadcast() {
+            const proto   = document.getElementById("sel-proto").value
             const sender  = document.getElementById("msg-sender").value.trim()
             const content = document.getElementById("msg-content").value.trim()
             if (!sender || !content) return alert("Escribe tu nombre y un mensaje")
-            const url = `/enviar/broadcast?sender_name=${encodeURIComponent(sender)}&message=${encodeURIComponent(content)}`
+
+            // pasar el protocolo al broadcast para que elija el puerto correcto
+            const url = `/enviar/broadcast?sender_name=${encodeURIComponent(sender)}&message=${encodeURIComponent(content)}&protocol=${proto}`
             fetch(url, { method: "POST" }).then(r => r.json()).then(res => {
-                const ok   = res.filter(r => r.status?.includes("correctamente")).length
+                const ok   = res.filter(r => r.status === "ok").length
                 const fail = res.length - ok
                 const msg  = fail > 0 ? `✓ ${ok} ok · ✗ ${fail} fallaron` : `✓ ${ok} enviados`
                 setStatus("brc-status", msg, fail > 0 ? "#facc15" : "#c084fc")
                 if (ok > 0) cargar(null)
             })
         }
+
+        // también actualizar puerto cuando cambia el peer seleccionado
+        document.getElementById("sel-peer").addEventListener("change", actualizarPuertoMostrado)
 
         cargarPeers()
         setInterval(cargarPeers, 5000)
